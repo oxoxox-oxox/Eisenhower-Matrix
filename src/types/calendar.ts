@@ -10,10 +10,13 @@ export interface CalendarEvent {
   isAllDay: boolean;
 }
 
+export type EnergyZoneType = 'peak' | 'moderate' | 'low' | 'fragment';
+
 export interface TimeSlot {
   start: Date;
   end: Date;
   durationMinutes: number;
+  energyZone?: EnergyZoneType;
 }
 
 export interface ScheduledTaskBlock {
@@ -29,7 +32,12 @@ export interface ScheduledTaskBlock {
   quadrant: QuadrantId;
   importance: number;
   urgency: number;
-  isCompleted: boolean;
+  isCompleted: boolean;       // 当天排程目标是否已完成
+  isFinalCompleted?: boolean; // 任务整体是否已彻底完成
+  isLastDay?: boolean;        // 当天是否为该任务的最后一天
+  energyZone?: EnergyZoneType;
+  strategyLabel?: string;
+  breakAfterMinutes?: number; // 该专注小节后预留的微休息时长（分钟）
 }
 
 export interface RestBlock {

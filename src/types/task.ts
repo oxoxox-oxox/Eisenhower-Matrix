@@ -11,7 +11,8 @@ export interface TaskItem {
   isImportant: boolean;       // importance >= 5
   isUrgent: boolean;          // urgency >= 5
   quadrant: QuadrantId;       // 自动计算派生
-  isCompleted: boolean;       // 是否完成
+  isCompleted: boolean;       // 是否彻底完成
+  completedDates?: string[];  // 已完成当天目标的日期列表 (YYYY-MM-DD)
   dueDate?: string | null;    // 截止日期 (YYYY-MM-DD)
   tags: string[];             // 自定义标签
   estimatedMinutes?: number;  // 预计耗时 (分钟)
@@ -62,4 +63,22 @@ export function calculateQuadrant(importance: number, urgency: number): Quadrant
   if (isImportant && !isUrgent) return 'q2';
   if (!isImportant && isUrgent) return 'q3';
   return 'q4';
+}
+
+/**
+ * 将 Date 格式化为本地时区的 YYYY-MM-DD 字符串（避免 toISOString 的 UTC 跨日偏移）
+ */
+export function formatLocalDate(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * 判断指定日期 (YYYY-MM-DD) 是否为该任务的最后一天（即设置了截止日期且当前日期 >= 截止日期）
+ */
+export function isTaskLastDay(task: Pick<TaskItem, 'dueDate'>, targetDateStr: string): boolean {
+  if (!task.dueDate) return false;
+  return targetDateStr >= task.dueDate;
 }

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { calculateQuadrant } from '../../types/task';
+import { calculateQuadrant, formatLocalDate } from '../../types/task';
 import { QUADRANTS_CONFIG } from '../../constants/quadrants';
-import { Sparkles, X, ArrowRight, CheckCircle2, RotateCcw } from 'lucide-react';
+import { calculateDynamicUrgency } from '../../utils/priorityAlgorithm';
+import { Sparkles, X, ArrowRight, CheckCircle2, RotateCcw, Calendar, Clock, Cpu } from 'lucide-react';
 
 interface WizardModalProps {
   isOpen: boolean;
@@ -10,6 +11,8 @@ interface WizardModalProps {
     title: string;
     importance: number;
     urgency: number;
+    dueDate: string;
+    estimatedMinutes?: number;
   }) => void;
 }
 
@@ -20,15 +23,24 @@ export const WizardModal: React.FC<WizardModalProps> = ({
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [importance, setImportance] = useState<number | null>(null);
-  const [urgency, setUrgency] = useState<number | null>(null);
+  const [dueDate, setDueDate] = useState<string>(() => formatLocalDate(new Date()));
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | ''>('');
   const [taskTitle, setTaskTitle] = useState('');
 
   if (!isOpen) return null;
 
+  const effectiveDueDate = dueDate || formatLocalDate(new Date());
+  const algoResult = calculateDynamicUrgency({
+    dueDate: effectiveDueDate,
+    estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : 30,
+  });
+  const urgency = algoResult.urgency;
+
   const handleReset = () => {
     setStep(1);
     setImportance(null);
-    setUrgency(null);
+    setDueDate(formatLocalDate(new Date()));
+    setEstimatedMinutes('');
     setTaskTitle('');
   };
 
@@ -37,21 +49,24 @@ export const WizardModal: React.FC<WizardModalProps> = ({
     setStep(2);
   };
 
-  const handleSelectUrgent = (val: boolean) => {
-    setUrgency(val ? 8.5 : 2.5);
-    setStep(3);
+  const handleQuickDateOffset = (daysOffset: number) => {
+    const target = new Date();
+    target.setDate(target.getDate() + daysOffset);
+    setDueDate(formatLocalDate(target));
   };
 
-  const targetQuadrantId = importance !== null && urgency !== null ? calculateQuadrant(importance, urgency) : 'q1';
+  const targetQuadrantId = importance !== null ? calculateQuadrant(importance, urgency) : 'q1';
   const meta = QUADRANTS_CONFIG[targetQuadrantId];
 
   const handleFinalSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!taskTitle.trim() || importance === null || urgency === null) return;
+    if (!taskTitle.trim() || importance === null || !effectiveDueDate) return;
     onConfirmTask({
       title: taskTitle.trim(),
       importance,
       urgency,
+      dueDate: effectiveDueDate,
+      estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : undefined,
     });
     handleReset();
     onClose();
@@ -153,66 +168,109 @@ export const WizardModal: React.FC<WizardModalProps> = ({
             </div>
           )}
 
-          {/* Step 2: 紧迫性问询 */}
+          {/* Step 2: 设定截止日期自动计算紧迫度 */}
           {step === 2 && (
             <div className="space-y-4">
               <div>
                 <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
-                  第 2 步：时间敏感度判断 (横轴 X)
+                  第 2 步：设定截止日期 (自动计算横轴紧迫度)
                 </span>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-2">
-                  这件事是否有即将到期的明确截止日或需要近期即刻行动？
+                  这件事的截止日期是什么时候？
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  反思：若延后 48 小时执行，是否会引发严重违约、卡点或危机？
+                  系统将根据距离截止日期的剩余时间与预计耗时，自动为你计算并实时更新紧迫度。
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleSelectUrgent(true)}
-                  className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 text-left hover:border-amber-500 hover:bg-amber-50/40 dark:border-slate-800 dark:hover:border-amber-500 dark:hover:bg-amber-950/20 transition-all group"
-                >
-                  <div className="h-5 w-5 rounded-full border border-slate-300 group-hover:border-amber-500 flex items-center justify-center shrink-0 mt-0.5">
-                    <div className="h-2.5 w-2.5 rounded-full group-hover:bg-amber-500 transition-colors" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                      是，迫在眉睫，急需处理（高紧迫度 · 8.5分）
-                    </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      有明确且逼近的截止时间节点、突发问题或紧迫催办。
-                    </p>
-                  </div>
-                </button>
+              <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5 text-slate-400" /> 截止日期 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleSelectUrgent(false)}
-                  className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 text-left hover:border-blue-500 hover:bg-blue-50/40 dark:border-slate-800 dark:hover:border-blue-500 dark:hover:bg-blue-950/20 transition-all group"
-                >
-                  <div className="h-5 w-5 rounded-full border border-slate-300 group-hover:border-blue-500 flex items-center justify-center shrink-0 mt-0.5">
-                    <div className="h-2.5 w-2.5 rounded-full group-hover:bg-blue-500 transition-colors" />
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5 text-slate-400" /> 预计耗时 (分)
+                  </label>
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    value={estimatedMinutes}
+                    onChange={(e) => setEstimatedMinutes(e.target.value ? Number(e.target.value) : '')}
+                    placeholder="默认 30 分钟"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                {/* 快捷日期预设 */}
+                <div className="col-span-2 flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[11px] text-slate-400 mr-0.5">快捷选择：</span>
+                  {[
+                    { label: '今天', days: 0 },
+                    { label: '明天', days: 1 },
+                    { label: '3天后', days: 3 },
+                    { label: '1周后', days: 7 },
+                    { label: '2周后', days: 14 },
+                  ].map((preset) => {
+                    const target = new Date();
+                    target.setDate(target.getDate() + preset.days);
+                    const presetStr = formatLocalDate(target);
+                    const isSelected = dueDate === presetStr;
+                    return (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => handleQuickDateOffset(preset.days)}
+                        className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 自动测算紧迫度只读展示 */}
+                <div className="col-span-2 pt-2 border-t border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300">
+                    <Cpu className="h-3.5 w-3.5 text-indigo-500" />
+                    <span>自动测算紧迫度：<strong>{algoResult.statusText}</strong></span>
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                      否，时间充裕，可做长期规划（低紧迫度 · 2.5分）
-                    </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      无即时压迫感，适合按节奏列入日程持续推进。
-                    </p>
-                  </div>
-                </button>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-mono">
+                    {urgency.toFixed(1)} / 10
+                  </span>
+                </div>
               </div>
 
-              <div className="pt-2">
+              <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
                   onClick={() => setStep(1)}
                   className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 >
                   ← 返回上一步修改重要性
+                </button>
+                <button
+                  type="button"
+                  disabled={!dueDate}
+                  onClick={() => setStep(3)}
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <span>下一步</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
@@ -242,7 +300,7 @@ export const WizardModal: React.FC<WizardModalProps> = ({
                 </div>
 
                 <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                  坐标：紧迫度 {urgency?.toFixed(1)}，重要度 {importance?.toFixed(1)}
+                  截止日：{effectiveDueDate}（{algoResult.statusText}） · 坐标：紧迫度 {urgency.toFixed(1)}，重要度 {importance?.toFixed(1)}
                 </div>
 
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-2">

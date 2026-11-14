@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { formatLocalDate } from '../../types/task';
 import type { TaskItem } from '../../types/task';
 import type { CalendarEvent } from '../../types/calendar';
-import { generateDaySchedule } from '../../utils/calendarScheduler';
+import { generateDaySchedule, computeTimelineLayout } from '../../utils/calendarScheduler';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -26,7 +27,7 @@ interface DayScheduleViewProps {
   onSyncCalendar: () => Promise<void>;
   isSyncing: boolean;
   syncError: string | null;
-  onToggleCompleteTask: (taskId: string) => void;
+  onToggleCompleteTask: (taskId: string, dateStr: string) => void;
   onEditTask: (task: TaskItem) => void;
 }
 
@@ -98,13 +99,22 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
     });
   };
 
+  const [nowTime, setNowTime] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTime(new Date());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleToday = () => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     setSelectedDate(now);
   };
 
-  // 生成当天自动排程
+  // 生成当天自动排程（结合当前时间基线约束与多日滚动顺延）
   const schedulePlan = useMemo(() => {
     return generateDaySchedule(tasks, fixedEvents, {
       targetDate: selectedDate,
@@ -112,7 +122,17 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
       workEndHour: effectiveEndHour,
       allowSplit,
     });
-  }, [tasks, fixedEvents, selectedDate, effectiveStartHour, effectiveEndHour, allowSplit]);
+  }, [tasks, fixedEvents, selectedDate, effectiveStartHour, effectiveEndHour, allowSplit, nowTime]);
+
+  // 扫描线 + 区间图着色分栏算法：统一计算固定日程、休息区与排程任务的水平分栏坐标，杜绝任何重叠遮挡
+  const timelineLayoutMap = useMemo(() => {
+    const allVisualItems = [
+      ...schedulePlan.fixedEvents.map((e) => ({ id: `fixed-${e.id}`, start: e.start, end: e.end })),
+      ...schedulePlan.restBlocks.map((r) => ({ id: `rest-${r.id}`, start: r.start, end: r.end })),
+      ...schedulePlan.scheduledTasks.map((b) => ({ id: `task-${b.id}`, start: b.start, end: b.end })),
+    ];
+    return computeTimelineLayout(allVisualItems, 18);
+  }, [schedulePlan]);
 
   // 格式化日期标题
   const formattedDate = useMemo(() => {
@@ -124,9 +144,18 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
     return `${y}年${m}月${d}日 ${w}`;
   }, [selectedDate]);
 
-  // 严格像素级时钟比例尺（每小时 80px），杜绝百分比浮点舍入与错位
-  const HOUR_HEIGHT = 80;
+  // 严格像素级时钟比例尺（每小时 88px），保证短任务块也有充裕的文字呼吸空间
+  const HOUR_HEIGHT = 88;
   const totalHeight = useMemo(() => totalWorkHours * HOUR_HEIGHT, [totalWorkHours]);
+
+  const isViewingToday = schedulePlan.dateStr === formatLocalDate(nowTime);
+  const currentTimeHourVal =
+    nowTime.getHours() + nowTime.getMinutes() / 60 + nowTime.getSeconds() / 3600;
+  const showCurrentTimeLine =
+    isViewingToday &&
+    currentTimeHourVal >= effectiveStartHour &&
+    currentTimeHourVal <= effectiveEndHour;
+  const currentTimeTopPx = (currentTimeHourVal - effectiveStartHour) * HOUR_HEIGHT;
 
   // 精确计算指定时间相对于时段起点与终点的 Top 像素与高度像素 (严格 1:1 对齐，杜绝错位与重叠)
   const getTimePosition = (start: Date, end: Date) => {
@@ -141,8 +170,8 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
     const durationMinutes = Math.max(1, endMinutes - startMinutes);
 
     const topPx = (startMinutes / 60) * HOUR_HEIGHT;
-    // 留出 2px 下边距，保证紧邻事件绝不重叠贴合覆盖
-    const heightPx = Math.max(12, (durationMinutes / 60) * HOUR_HEIGHT - 2);
+    // 最小视觉高度 22px，留出 2px 下边距，保证紧邻事件绝不重叠贴合覆盖
+    const heightPx = Math.max(22, (durationMinutes / 60) * HOUR_HEIGHT - 2);
 
     return { topPx, heightPx, durationMinutes: Math.round(durationMinutes) };
   };
@@ -286,16 +315,16 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-indigo-500" />
-            <span>已排待办: {schedulePlan.scheduledTasks.length} 个 ({Math.round((schedulePlan.stats.totalScheduledMinutes / 60) * 10) / 10}h)</span>
+            <span>已排专注: {Math.round((schedulePlan.stats.totalScheduledMinutes / 60) * 10) / 10}h / 5.5h 上限</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-sky-500" />
-            <span>弹性空闲: {Math.round((schedulePlan.stats.totalFreeMinutes / 60) * 10) / 10}h</span>
+            <span>弹性留白: {Math.round((schedulePlan.stats.totalFreeMinutes / 60) * 10) / 10}h</span>
           </span>
         </div>
 
         <div className="text-[11px] text-slate-400">
-          时段: {Math.floor(effectiveStartHour).toString().padStart(2, '0')}:00 ~ {Math.ceil(effectiveEndHour).toString().padStart(2, '0')}:00 · 统一规划 Break Time
+          智能排程：黄金深度区优先 Q1/Q2 · 碎片/午后填补 Q3 · 60m 节律切分
         </div>
       </div>
 
@@ -337,10 +366,27 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                 );
               })}
 
-              {/* 1. 外部订阅日历固定事件 (不可动区间) */}
+              {/* 实时当前时间指示红线 (仅在查看今天且处于工作时段内展示) */}
+              {showCurrentTimeLine && (
+                <div
+                  style={{ top: `${currentTimeTopPx}px` }}
+                  className="absolute left-0 right-0 z-30 flex items-center pointer-events-none -translate-y-1/2"
+                >
+                  <div className="h-2.5 w-2.5 rounded-full bg-rose-500 -ml-1.25 ring-2 ring-white dark:ring-slate-900 shadow-xs" />
+                  <div className="flex-1 border-t-2 border-rose-500/80" />
+                  <span className="ml-1.5 mr-2 px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-mono font-bold shadow-xs">
+                    当前 {formatClockTime(nowTime)}
+                  </span>
+                </div>
+              )}
+
+              {/* 1. 外部订阅日历固定事件 (不可动区间，支持扫描线分栏排版) */}
               {schedulePlan.fixedEvents.map((ev) => {
-                const { topPx, heightPx, durationMinutes } = getTimePosition(ev.start, ev.end);
-                const isCompact = durationMinutes <= 25;
+                const { topPx, heightPx } = getTimePosition(ev.start, ev.end);
+                const layout = timelineLayoutMap.get(`fixed-${ev.id}`);
+                const leftPct = layout ? layout.leftPercent : 1.5;
+                const widthPct = layout ? layout.widthPercent : 97;
+                const isSingleLine = heightPx < 40;
 
                 return (
                   <div
@@ -348,14 +394,14 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                     style={{
                       top: `${topPx}px`,
                       height: `${heightPx}px`,
-                      left: '1.5%',
-                      width: '97%',
+                      left: `${leftPct}%`,
+                      width: `${widthPct}%`,
                     }}
-                    className={`absolute z-10 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-200/80 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 shadow-2xs overflow-hidden backdrop-blur-2xs transition-all ${
-                      isCompact ? 'px-2 py-0.5 text-[11px] flex items-center justify-between' : 'p-2.5 text-xs'
+                    className={`absolute z-10 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-200/85 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 shadow-2xs overflow-hidden backdrop-blur-2xs transition-all ${
+                      isSingleLine ? 'px-2.5 py-0.5 text-[11px] flex items-center justify-between' : 'px-3 py-2 text-xs'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1 w-full">
+                    <div className="flex items-center justify-between gap-1.5 w-full">
                       <div className="flex items-center gap-1.5 font-bold truncate">
                         <Lock className="h-3 w-3 text-slate-500 shrink-0" />
                         <span className="truncate">{ev.title}</span>
@@ -365,7 +411,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                       </span>
                     </div>
 
-                    {!isCompact && ev.location && (
+                    {!isSingleLine && ev.location && (
                       <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500 truncate">
                         <MapPin className="h-2.5 w-2.5 shrink-0" />
                         <span className="truncate">{ev.location}</span>
@@ -375,10 +421,13 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                 );
               })}
 
-              {/* 2. 生理节律与休息时段：统一以优雅简洁的 Break Time 呈现（相邻已合并） */}
+              {/* 2. 生理节律午晚餐休息区（已剥离 10m 细碎卡片，仅保留舒适的午休/晚休段） */}
               {schedulePlan.restBlocks.map((rest) => {
-                const { topPx, heightPx, durationMinutes } = getTimePosition(rest.start, rest.end);
-                const isCompact = durationMinutes <= 25;
+                const { topPx, heightPx } = getTimePosition(rest.start, rest.end);
+                const layout = timelineLayoutMap.get(`rest-${rest.id}`);
+                const leftPct = layout ? layout.leftPercent : 1.5;
+                const widthPct = layout ? layout.widthPercent : 97;
+                const isSingleLine = heightPx < 36;
 
                 return (
                   <div
@@ -386,16 +435,16 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                     style={{
                       top: `${topPx}px`,
                       height: `${heightPx}px`,
-                      left: '1.5%',
-                      width: '97%',
+                      left: `${leftPct}%`,
+                      width: `${widthPct}%`,
                     }}
-                    className={`absolute z-10 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 shadow-2xs overflow-hidden backdrop-blur-2xs flex items-center justify-between transition-all hover:bg-slate-100 dark:hover:bg-slate-800/80 ${
-                      isCompact ? 'px-2 py-0 text-[10px]' : 'p-2 text-xs'
+                    className={`absolute z-10 rounded-xl border border-dashed border-slate-300/90 dark:border-slate-700 bg-slate-100/75 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 overflow-hidden backdrop-blur-2xs flex items-center justify-between transition-all hover:bg-slate-100 dark:hover:bg-slate-800/80 ${
+                      isSingleLine ? 'px-2.5 py-0.5 text-[11px]' : 'px-3 py-2 text-xs'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 truncate font-medium text-slate-700 dark:text-slate-200">
-                      <Coffee className={`${isCompact ? 'h-3 w-3' : 'h-3.5 w-3.5'} text-amber-600/80 dark:text-amber-400/80 shrink-0`} />
-                      <span className="truncate">Break Time</span>
+                    <div className="flex items-center gap-1.5 truncate font-medium text-slate-600 dark:text-slate-300">
+                      <Coffee className="h-3.5 w-3.5 text-amber-600/80 dark:text-amber-400/80 shrink-0" />
+                      <span className="truncate">{rest.title}</span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0 text-[10px] font-mono text-slate-400 dark:text-slate-500">
                       <span>{formatClockTime(rest.start)} - {formatClockTime(rest.end)}</span>
@@ -405,11 +454,17 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                 );
               })}
 
-              {/* 3. 算法自动填入的四象限任务块 */}
+              {/* 3. 算法自动填入的四象限任务块（支持分栏布局、三档高度自适应与内联微休息徽标） */}
               {schedulePlan.scheduledTasks.map((block) => {
-                const { topPx, heightPx, durationMinutes } = getTimePosition(block.start, block.end);
+                const { topPx, heightPx } = getTimePosition(block.start, block.end);
                 const originalTask = tasks.find((t) => t.id === block.taskId);
-                const isCompact = durationMinutes <= 25;
+                const layout = timelineLayoutMap.get(`task-${block.id}`);
+                const leftPct = layout ? layout.leftPercent : 1.5;
+                const widthPct = layout ? layout.widthPercent : 97;
+
+                // 三档视觉高度自适应：避免短时任务块两行文字被截断
+                const isSingleLine = heightPx < 42;
+                const isMediumHeight = heightPx >= 42 && heightPx < 58;
 
                 // 象限视觉主题
                 const qStyles = {
@@ -425,19 +480,32 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                     style={{
                       top: `${topPx}px`,
                       height: `${heightPx}px`,
-                      left: '1.5%',
-                      width: '97%',
+                      left: `${leftPct}%`,
+                      width: `${widthPct}%`,
                     }}
                     className={`absolute z-20 rounded-xl border shadow-xs transition-all duration-150 hover:z-30 hover:shadow-md overflow-hidden ${qStyles} ${
-                      isCompact ? 'px-2 py-0.5 text-[11px] flex items-center justify-between' : 'p-2 text-xs'
+                      isSingleLine
+                        ? 'px-2.5 py-0.5 text-[11px] flex items-center justify-between'
+                        : isMediumHeight
+                        ? 'px-2.5 py-1 text-xs flex flex-col justify-center'
+                        : 'px-3 py-2 text-xs'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1 w-full">
+                    <div className="flex items-center justify-between gap-1.5 w-full">
                       <div className="flex items-center gap-1.5 truncate">
                         {/* 完成状态勾选 */}
                         <button
                           type="button"
-                          onClick={() => onToggleCompleteTask(block.taskId)}
+                          onClick={() => onToggleCompleteTask(block.taskId, schedulePlan.dateStr)}
+                          title={
+                            block.isCompleted
+                              ? block.isFinalCompleted
+                                ? '任务已彻底完成（点击取消）'
+                                : '当天目标已完成（点击取消）'
+                              : block.isLastDay
+                              ? '今天是任务最后一天：勾选将直接标记任务彻底完成'
+                              : '勾选仅标记当天目标完成'
+                          }
                           className={`h-4 w-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
                             block.isCompleted
                               ? 'bg-emerald-500 border-emerald-500 text-white'
@@ -459,20 +527,46 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+                        {isSingleLine && block.isCompleted && (
+                          <span className="px-1 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-sans font-semibold">
+                            {block.isFinalCompleted ? '已彻底完成' : '今日完成'}
+                          </span>
+                        )}
                         <span>{formatClockTime(block.start)} - {formatClockTime(block.end)}</span>
                         <span className="opacity-75">({block.durationMinutes}m)</span>
                       </div>
                     </div>
 
                     {/* 状态徽标与象限指引 */}
-                    {!isCompact && (
-                      <div className="mt-1 flex items-center gap-1.5 text-[10px] opacity-80">
+                    {!isSingleLine && (
+                      <div className={`${isMediumHeight ? 'mt-0.5' : 'mt-1'} flex items-center gap-1.5 text-[10px] opacity-85 flex-wrap truncate`}>
                         <span className="font-semibold uppercase tracking-wider">
                           {block.quadrant.toUpperCase()}
                         </span>
+                        {block.isCompleted ? (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 font-semibold">
+                            {block.isFinalCompleted ? '✓ 任务已彻底完成' : '✓ 当天目标已完成'}
+                          </span>
+                        ) : (
+                          block.isLastDay && (
+                            <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-800 dark:text-rose-200 font-semibold">
+                              最后一天
+                            </span>
+                          )
+                        )}
+                        {block.strategyLabel && (
+                          <span className="px-1.5 py-0.2 rounded bg-black/10 dark:bg-white/10 font-medium">
+                            {block.strategyLabel}
+                          </span>
+                        )}
                         {block.isSplit && (
                           <span className="px-1 rounded bg-black/10 dark:bg-white/10 font-mono">
-                            第 {block.partIndex}/{block.totalParts} 段
+                            第 {block.partIndex}/{block.totalParts} 节
+                          </span>
+                        )}
+                        {block.breakAfterMinutes && (
+                          <span className="px-1.5 py-0.2 rounded bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-300 font-medium">
+                            +{block.breakAfterMinutes}m 缓冲休息
                           </span>
                         )}
                         <span>分值: ({block.urgency.toFixed(1)}, {block.importance.toFixed(1)})</span>
@@ -501,10 +595,10 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
           <div className="w-64 border-l border-slate-200 dark:border-slate-800 p-4 overflow-y-auto hidden lg:block bg-slate-50/30 dark:bg-slate-900/30">
             <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 text-amber-500" />
-              <span>当天未排满待办 ({schedulePlan.unscheduledTasks.length})</span>
+              <span>未排入今日日程 ({schedulePlan.unscheduledTasks.length})</span>
             </h3>
             <p className="text-[10px] text-slate-400 mb-3">
-              当天可用空闲时间不足，以下任务建议顺延至明日或调整工作时段：
+              基于精力负荷保护（5.5h 上限）、防切碎规则与 Q4 自动过滤策略暂缓排入：
             </p>
             <div className="space-y-2">
               {schedulePlan.unscheduledTasks.map((item) => (

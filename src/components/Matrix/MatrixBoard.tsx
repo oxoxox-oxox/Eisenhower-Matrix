@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { formatLocalDate } from '../../types/task';
 import type { TaskItem } from '../../types/task';
 import { 
   Check, 
@@ -24,6 +25,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
   onOpenCreateWithCoordinates,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const todayStr = formatLocalDate(new Date());
 
   // 处理在坐标系任意空白区域点击，快速落位创建
   const handlePlaneClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -255,6 +257,11 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                     >
                       <Calendar className="h-2.5 w-2.5 shrink-0" />
                       <span>{task.algorithmStatusText || task.dueDate.slice(5)}</span>
+                    </span>
+                  )}
+                  {!task.isCompleted && task.completedDates?.includes(todayStr) && (
+                    <span className="px-1 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold shrink-0">
+                      今日完成
                     </span>
                   )}
                 </div>

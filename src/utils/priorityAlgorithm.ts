@@ -26,7 +26,7 @@ export interface DynamicUrgencyParams {
 export function calculateDynamicUrgency({
   dueDate,
   estimatedMinutes = 30,
-  fallbackUrgency = 5.0,
+  fallbackUrgency = 2.0,
   currentTime = new Date(),
 }: DynamicUrgencyParams): {
   urgency: number;
@@ -39,7 +39,7 @@ export function calculateDynamicUrgency({
       urgency: Math.max(0, Math.min(10, fallbackUrgency)),
       slackHours: null,
       remainingHours: null,
-      statusText: '无明确截止日（依基准评分）',
+      statusText: '未设置截止日期',
     };
   }
 

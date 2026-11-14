@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { TaskItem } from '../../types/task';
-import { calculateQuadrant } from '../../types/task';
+import { calculateQuadrant, formatLocalDate } from '../../types/task';
 import { QUADRANTS_CONFIG } from '../../constants/quadrants';
 import { calculateDynamicUrgency } from '../../utils/priorityAlgorithm';
 import { 
@@ -40,62 +40,55 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   onSave,
   initialTask,
   defaultImportance = 7,
-  defaultUrgency = 7,
   allExistingTags = [],
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [importance, setImportance] = useState<number>(defaultImportance);
-  const [urgency, setUrgency] = useState<number>(defaultUrgency);
-  const [useAutoUrgency, setUseAutoUrgency] = useState(true);
-  const [dueDate, setDueDate] = useState('');
+  const [dueDate, setDueDate] = useState(() => formatLocalDate(new Date()));
   const [estimatedMinutes, setEstimatedMinutes] = useState<number | ''>('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
 
   // 初始化填充数据
   useEffect(() => {
+    const todayStr = formatLocalDate(new Date());
     if (initialTask) {
       setTitle(initialTask.title);
       setDescription(initialTask.description || '');
       setImportance(initialTask.importance ?? (initialTask.isImportant ? 8 : 2));
-      setUrgency(initialTask.urgency ?? (initialTask.isUrgent ? 8 : 2));
-      setUseAutoUrgency(initialTask.useAutoUrgency ?? (initialTask.dueDate ? true : false));
-      setDueDate(initialTask.dueDate || '');
+      setDueDate(initialTask.dueDate || todayStr);
       setEstimatedMinutes(initialTask.estimatedMinutes || '');
       setTags(initialTask.tags || []);
     } else {
       setTitle('');
       setDescription('');
       setImportance(defaultImportance);
-      setUrgency(defaultUrgency);
-      setUseAutoUrgency(true);
-      setDueDate('');
+      setDueDate(todayStr);
       setEstimatedMinutes('');
       setTags([]);
     }
-  }, [initialTask, defaultImportance, defaultUrgency, isOpen]);
+  }, [initialTask, defaultImportance, isOpen]);
 
-  // 当截止日期或耗时变化，若启用了自动算法，实时动态测算紧迫度
-  const algoResult = dueDate
-    ? calculateDynamicUrgency({
-        dueDate,
-        estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : 30,
-        fallbackUrgency: urgency,
-      })
-    : null;
-
-  useEffect(() => {
-    if (useAutoUrgency && algoResult) {
-      setUrgency(algoResult.urgency);
-    }
-  }, [dueDate, estimatedMinutes, useAutoUrgency]);
+  // 实时根据截止日期与预计耗时自动计算紧迫度
+  const effectiveDueDate = dueDate || formatLocalDate(new Date());
+  const algoResult = calculateDynamicUrgency({
+    dueDate: effectiveDueDate,
+    estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : 30,
+  });
+  const urgency = algoResult.urgency;
 
   if (!isOpen) return null;
 
   // 动态自动计算派生象限
   const computedQuadrantId = calculateQuadrant(importance, urgency);
   const computedQuadrantMeta = QUADRANTS_CONFIG[computedQuadrantId];
+
+  const handleQuickDateOffset = (daysOffset: number) => {
+    const target = new Date();
+    target.setDate(target.getDate() + daysOffset);
+    setDueDate(formatLocalDate(target));
+  };
 
   const handleAddTag = () => {
     const val = tagInput.trim();
@@ -111,15 +104,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || !effectiveDueDate) return;
 
     onSave({
       title: title.trim(),
       description: description.trim() || undefined,
       importance,
       urgency,
-      useAutoUrgency: dueDate ? useAutoUrgency : false,
-      dueDate: dueDate || null,
+      useAutoUrgency: true,
+      dueDate: effectiveDueDate,
       tags,
       estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : undefined,
     });
@@ -163,14 +156,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             />
           </div>
 
-          {/* 截止日期与预计用时 (置于评分之前，以便算法自动生效) */}
+          {/* 截止日期与预计用时 (自动决定紧迫度) */}
           <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5 text-slate-400" /> 截止日期 (驱动算法)
+                <Calendar className="h-3.5 w-3.5 text-slate-400" /> 截止日期 <span className="text-rose-500">*</span>
               </label>
               <input
                 type="date"
+                required
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -187,36 +181,44 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 step="5"
                 value={estimatedMinutes}
                 onChange={(e) => setEstimatedMinutes(e.target.value ? Number(e.target.value) : '')}
-                placeholder="例如：60"
+                placeholder="默认 30 分钟"
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
 
-            {/* 算法提示条 */}
-            {dueDate && algoResult && (
-              <div className="col-span-2 pt-1 flex items-center justify-between text-[11px] text-indigo-700 dark:text-indigo-300 border-t border-slate-200/60 dark:border-slate-700/60">
-                <div className="flex items-center gap-1">
-                  <Cpu className="h-3.5 w-3.5 text-indigo-500 animate-pulse" />
-                  <span>
-                    <strong>迫近算法已测算</strong>：{algoResult.statusText}（测得紧迫度：{algoResult.urgency}）
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUseAutoUrgency(!useAutoUrgency)}
-                  className="hover:underline flex items-center gap-0.5"
-                >
-                  {useAutoUrgency ? (
-                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">✓ 自动跟随</span>
-                  ) : (
-                    <span className="text-slate-500">手动指定</span>
-                  )}
-                </button>
-              </div>
-            )}
+            {/* 快捷日期选择 */}
+            <div className="col-span-2 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] text-slate-400 mr-0.5">快捷设定：</span>
+              {[
+                { label: '今天', days: 0 },
+                { label: '明天', days: 1 },
+                { label: '3天后', days: 3 },
+                { label: '1周后', days: 7 },
+                { label: '2周后', days: 14 },
+              ].map((preset) => {
+                const target = new Date();
+                target.setDate(target.getDate() + preset.days);
+                const presetStr = formatLocalDate(target);
+                const isSelected = dueDate === presetStr;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleQuickDateOffset(preset.days)}
+                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* 连续度量评分滑块：重要度与紧迫度 (0 ~ 10) */}
+          {/* 重要度滑块与自动紧迫度只读展示 */}
           <div className="space-y-3.5 p-4 rounded-xl bg-slate-50 border border-slate-200/80 dark:bg-slate-800/40 dark:border-slate-800">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
@@ -254,40 +256,23 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               </div>
             </div>
 
-            {/* 紧迫度滑块 (X 轴) */}
-            <div className="space-y-1.5 pt-1">
+            {/* 紧迫度只读展示 (X 轴 - 由截止日期自动计算) */}
+            <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/60">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
                   <Zap className="h-3.5 w-3.5 text-amber-500" />
                   <span>横轴：时间紧迫度 (Urgency)</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {dueDate && useAutoUrgency && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-medium">
-                      算法计算中
-                    </span>
-                  )}
-                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-mono">
-                    {urgency.toFixed(1)} / 10
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-medium">
+                    <Cpu className="h-2.5 w-2.5" /> 依截止日自动计算
                   </span>
                 </div>
+                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-mono">
+                  {urgency.toFixed(1)} / 10
+                </span>
               </div>
-              <input
-                type="range"
-                min="0"
-                max="10"
-                step="0.5"
-                value={urgency}
-                onChange={(e) => {
-                  setUrgency(parseFloat(e.target.value));
-                  setUseAutoUrgency(false); // 手动滑动时自动解除算法托管
-                }}
-                className="w-full accent-amber-500 cursor-pointer"
-              />
-              <div className="flex justify-between text-[10px] text-slate-400">
-                <span>0 (从容弹性)</span>
-                <span className="font-semibold text-slate-600 dark:text-slate-300">5 (中线)</span>
-                <span>10 (必须立即处理)</span>
+              <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                <span>测算状态：<strong className="text-indigo-600 dark:text-indigo-400">{algoResult.statusText}</strong></span>
+                <span>每次打开应用将随剩余时间自动更新</span>
               </div>
             </div>
 

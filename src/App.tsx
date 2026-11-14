@@ -16,6 +16,7 @@ export function App() {
   const {
     tasks,
     filteredTasks,
+    calendarTasks,
     allTags,
     filterOptions,
     setFilterOptions,
@@ -24,6 +25,7 @@ export function App() {
     updateTask,
     deleteTask,
     toggleComplete,
+    toggleCalendarTaskComplete,
     clearAllTasks,
     importTasks,
   } = useTasks();
@@ -256,14 +258,14 @@ export function App() {
           />
         ) : (
           <DayScheduleView
-            tasks={filteredTasks}
+            tasks={calendarTasks}
             fixedEvents={fixedEvents}
             subscriptionUrl={subscriptionUrl}
             onUpdateSubscriptionUrl={syncCalendarWithUrl}
             onSyncCalendar={() => syncCalendarWithUrl(subscriptionUrl)}
             isSyncing={isSyncing}
             syncError={syncError}
-            onToggleCompleteTask={toggleComplete}
+            onToggleCompleteTask={toggleCalendarTaskComplete}
             onEditTask={handleEditTask}
           />
         )}
