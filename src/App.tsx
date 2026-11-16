@@ -1,33 +1,25 @@
 import { useState, useEffect } from 'react';
 import { useTasks } from './hooks/useTasks';
-import { Sidebar } from './components/Sidebar/Sidebar';
+import { TopBar } from './components/Header/TopBar';
 import { MatrixBoard } from './components/Matrix/MatrixBoard';
 import { DayScheduleView } from './components/Calendar/DayScheduleView';
 import { TaskModal } from './components/Dialogs/TaskModal';
-import { WizardModal } from './components/Dialogs/WizardModal';
-import { StatsModal } from './components/Dialogs/StatsModal';
-import { BackupModal } from './components/Dialogs/BackupModal';
 import type { TaskItem } from './types/task';
 import type { CalendarEvent } from './types/calendar';
 import { fetchIcsFeed, parseIcsText } from './utils/calendarParser';
-import { PanelLeftOpen } from 'lucide-react';
 
 export function App() {
   const {
-    tasks,
+    totalCount,
     filteredTasks,
-    calendarTasks,
     allTags,
     filterOptions,
     setFilterOptions,
-    stats,
     addTask,
     updateTask,
     deleteTask,
     toggleComplete,
     toggleCalendarTaskComplete,
-    clearAllTasks,
-    importTasks,
   } = useTasks();
 
   // 主题模式控制
@@ -51,7 +43,7 @@ export function App() {
     const handleClose = () => {
       try {
         navigator.sendBeacon('/api/shutdown');
-      } catch (_) {}
+      } catch {}
     };
 
     window.addEventListener('beforeunload', handleClose);
@@ -64,30 +56,55 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('em_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('em_theme', 'light');
-    }
+    document.documentElement.classList.toggle('dark', isDark);
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+    localStorage.setItem('em_theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
-  const toggleTheme = () => setIsDark(!isDark);
+  const toggleTheme = () => setIsDark((prev) => !prev);
 
   // 当前主视图：'matrix' (象限坐标看板) | 'calendar' (日程时间轴排程)
   const [activeView, setActiveView] = useState<'matrix' | 'calendar'>('matrix');
-
-  // 侧边栏折叠状态
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // 外部日历订阅状态
   const [subscriptionUrl, setSubscriptionUrl] = useState<string>(() => {
     return localStorage.getItem('em_calendar_subscription_url') || '';
   });
-  const [fixedEvents, setFixedEvents] = useState<CalendarEvent[]>([]);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [fixedEvents, setFixedEvents] = useState<CalendarEvent[]>(() => {
+    const cached = localStorage.getItem('em_calendar_events_cache');
+    if (!cached) return [];
+    try {
+      const list = JSON.parse(cached);
+      if (Array.isArray(list)) {
+        return list.map((e) => ({
+          ...e,
+          start: new Date(e.start),
+          end: new Date(e.end),
+        }));
+      }
+    } catch (e) {
+      console.warn('Failed to parse cached calendar events', e);
+    }
+    return [];
+  });
+  const [isSyncing, setIsSyncing] = useState(() =>
+    Boolean(localStorage.getItem('em_calendar_subscription_url')?.trim())
+  );
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  const fetchAndCacheCalendarEvents = async (cleanUrl: string) => {
+    const icsData = await fetchIcsFeed(cleanUrl);
+    const events = parseIcsText(icsData);
+    localStorage.setItem('em_calendar_subscription_url', cleanUrl);
+
+    const serializable = events.map((e) => ({
+      ...e,
+      start: e.start.toISOString(),
+      end: e.end.toISOString(),
+    }));
+    localStorage.setItem('em_calendar_events_cache', JSON.stringify(serializable));
+    return events;
+  };
 
   // 同步并拉取日历数据
   const syncCalendarWithUrl = async (url: string) => {
@@ -95,6 +112,7 @@ export function App() {
     if (!cleanUrl) {
       setSubscriptionUrl('');
       setFixedEvents([]);
+      setSyncError(null);
       localStorage.removeItem('em_calendar_subscription_url');
       localStorage.removeItem('em_calendar_events_cache');
       return;
@@ -103,19 +121,9 @@ export function App() {
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const icsData = await fetchIcsFeed(cleanUrl);
-      const events = parseIcsText(icsData);
+      const events = await fetchAndCacheCalendarEvents(cleanUrl);
       setFixedEvents(events);
       setSubscriptionUrl(cleanUrl);
-      localStorage.setItem('em_calendar_subscription_url', cleanUrl);
-
-      // 本地序列化缓存
-      const serializable = events.map((e) => ({
-        ...e,
-        start: e.start.toISOString(),
-        end: e.end.toISOString(),
-      }));
-      localStorage.setItem('em_calendar_events_cache', JSON.stringify(serializable));
     } catch (err: any) {
       console.error('Calendar sync error:', err);
       setSyncError(err.message || '拉取或解析日历数据失败，请检查链接或网络');
@@ -124,41 +132,40 @@ export function App() {
     }
   };
 
-  // 初始加载日历缓存与自动同步
+  // 启动时若已绑定订阅链接，自动后台同步一次
   useEffect(() => {
-    const cached = localStorage.getItem('em_calendar_events_cache');
-    if (cached) {
-      try {
-        const list = JSON.parse(cached);
-        if (Array.isArray(list)) {
-          setFixedEvents(
-            list.map((e) => ({
-              ...e,
-              start: new Date(e.start),
-              end: new Date(e.end),
-            }))
-          );
-        }
-      } catch (e) {
-        console.warn('Failed to parse cached calendar events', e);
-      }
-    }
+    const savedUrl = localStorage.getItem('em_calendar_subscription_url')?.trim();
+    if (!savedUrl) return;
 
-    const savedUrl = localStorage.getItem('em_calendar_subscription_url');
-    if (savedUrl) {
-      syncCalendarWithUrl(savedUrl);
-    }
+    let cancelled = false;
+    fetchAndCacheCalendarEvents(savedUrl)
+      .then((events) => {
+        if (!cancelled) {
+          setFixedEvents(events);
+          setSyncError(null);
+        }
+      })
+      .catch((err: any) => {
+        console.error('Calendar sync error:', err);
+        if (!cancelled) {
+          setSyncError(err.message || '拉取或解析日历数据失败，请检查链接或网络');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsSyncing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 弹窗状态控制
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [defaultImportance, setDefaultImportance] = useState<number>(7);
-  const [defaultUrgency, setDefaultUrgency] = useState<number>(7);
-
-  const [isWizardOpen, setIsWizardOpen] = useState(false);
-  const [isStatsOpen, setIsStatsOpen] = useState(false);
-  const [isBackupOpen, setIsBackupOpen] = useState(false);
 
   // 全局快捷键监听（按 N 键新建任务）
   useEffect(() => {
@@ -170,7 +177,6 @@ export function App() {
         e.preventDefault();
         setEditingTask(null);
         setDefaultImportance(7);
-        setDefaultUrgency(7);
         setIsTaskModalOpen(true);
       }
     };
@@ -184,10 +190,9 @@ export function App() {
     setIsTaskModalOpen(true);
   };
 
-  const handleOpenNewTaskWithCoordinates = (importance: number, urgency: number) => {
+  const handleOpenNewTaskWithCoordinates = (importance: number) => {
     setEditingTask(null);
     setDefaultImportance(importance);
-    setDefaultUrgency(urgency);
     setIsTaskModalOpen(true);
   };
 
@@ -195,8 +200,6 @@ export function App() {
     title: string;
     description?: string;
     importance: number;
-    urgency: number;
-    useAutoUrgency?: boolean;
     dueDate?: string | null;
     tags?: string[];
     estimatedMinutes?: number;
@@ -209,44 +212,22 @@ export function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      {/* 左侧选项工具栏 */}
-      <Sidebar
-        isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+      {/* 顶部扁平工具栏 */}
+      <TopBar
         activeView={activeView}
         onSelectView={(v) => setActiveView(v)}
         filterOptions={filterOptions}
         onFilterChange={(newFilters) => setFilterOptions((prev) => ({ ...prev, ...newFilters }))}
         allTags={allTags}
-        stats={stats}
+        taskCount={totalCount}
         isDark={isDark}
         onToggleTheme={toggleTheme}
-        onOpenNewTask={() => handleOpenNewTaskWithCoordinates(7, 7)}
-        onOpenWizard={() => setIsWizardOpen(true)}
-        onOpenStats={() => setIsStatsOpen(true)}
-        onOpenBackup={() => setIsBackupOpen(true)}
+        onOpenNewTask={() => handleOpenNewTaskWithCoordinates(7)}
       />
 
-      {/* 右侧主视窗 */}
-      <main className="flex-1 flex flex-col h-full min-w-0 p-3 md:p-4 overflow-hidden">
-        {/* 移动端/折叠时的顶部轻量展开条 */}
-        {isSidebarCollapsed && (
-          <div className="md:hidden flex items-center justify-between pb-2 mb-1 border-b border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsSidebarCollapsed(false)}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800"
-            >
-              <PanelLeftOpen className="h-5 w-5" />
-            </button>
-            <span className="text-xs font-bold">
-              {activeView === 'matrix' ? '四象限坐标看板' : '日历日程排程'}
-            </span>
-            <div className="w-5" />
-          </div>
-        )}
-
+      {/* 主视窗 */}
+      <main className="flex-1 min-h-0 flex flex-col p-2.5 md:p-3.5 overflow-hidden">
         {/* 视图分流：象限坐标系看板 VS 日历日程排程 */}
         {activeView === 'matrix' ? (
           <MatrixBoard
@@ -258,7 +239,7 @@ export function App() {
           />
         ) : (
           <DayScheduleView
-            tasks={calendarTasks}
+            tasks={filteredTasks}
             fixedEvents={fixedEvents}
             subscriptionUrl={subscriptionUrl}
             onUpdateSubscriptionUrl={syncCalendarWithUrl}
@@ -281,28 +262,7 @@ export function App() {
         onSave={handleSaveTask}
         initialTask={editingTask}
         defaultImportance={defaultImportance}
-        defaultUrgency={defaultUrgency}
         allExistingTags={allTags}
-      />
-
-      <WizardModal
-        isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
-        onConfirmTask={(data) => addTask(data)}
-      />
-
-      <StatsModal
-        isOpen={isStatsOpen}
-        onClose={() => setIsStatsOpen(false)}
-        stats={stats}
-      />
-
-      <BackupModal
-        isOpen={isBackupOpen}
-        onClose={() => setIsBackupOpen(false)}
-        tasks={tasks}
-        onImport={importTasks}
-        onClearAll={clearAllTasks}
       />
     </div>
   );

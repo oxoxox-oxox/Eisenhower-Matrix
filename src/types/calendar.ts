@@ -33,7 +33,6 @@ export interface ScheduledTaskBlock {
   importance: number;
   urgency: number;
   isCompleted: boolean;       // 当天排程目标是否已完成
-  isFinalCompleted?: boolean; // 任务整体是否已彻底完成
   isLastDay?: boolean;        // 当天是否为该任务的最后一天
   energyZone?: EnergyZoneType;
   strategyLabel?: string;
@@ -42,7 +41,7 @@ export interface ScheduledTaskBlock {
 
 export interface RestBlock {
   id: string;
-  type: 'lunch' | 'dinner' | 'break';
+  type: 'lunch' | 'dinner';
   title: string;
   start: Date;
   end: Date;
@@ -54,7 +53,6 @@ export interface DayScheduleResult {
   fixedEvents: CalendarEvent[];
   scheduledTasks: ScheduledTaskBlock[];
   restBlocks: RestBlock[];
-  freeSlots: TimeSlot[];
   unscheduledTasks: {
     taskId: string;
     title: string;

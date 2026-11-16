@@ -1,19 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { TaskItem } from '../../types/task';
 import { calculateQuadrant, formatLocalDate } from '../../types/task';
 import { QUADRANTS_CONFIG } from '../../constants/quadrants';
 import { calculateDynamicUrgency } from '../../utils/priorityAlgorithm';
-import { 
-  X, 
-  Flame, 
-  Zap, 
-  Calendar, 
-  Clock, 
-  Tag as TagIcon, 
+import {
+  X,
+  Flame,
+  Zap,
+  Calendar,
+  Clock,
+  Tag as TagIcon,
   ArrowRight,
   Plus,
   Cpu
 } from 'lucide-react';
+
+const QUICK_DATE_PRESETS = [
+  { label: '今天', days: 0 },
+  { label: '明天', days: 1 },
+  { label: '3天后', days: 3 },
+  { label: '1周后', days: 7 },
+  { label: '2周后', days: 14 },
+];
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -22,15 +30,12 @@ interface TaskModalProps {
     title: string;
     description?: string;
     importance: number;
-    urgency: number;
-    useAutoUrgency?: boolean;
     dueDate?: string | null;
     tags?: string[];
     estimatedMinutes?: number;
   }) => void;
   initialTask?: TaskItem | null;
   defaultImportance?: number;
-  defaultUrgency?: number;
   allExistingTags?: string[];
 }
 
@@ -42,52 +47,59 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   defaultImportance = 7,
   allExistingTags = [],
 }) => {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [importance, setImportance] = useState<number>(defaultImportance);
-  const [dueDate, setDueDate] = useState(() => formatLocalDate(new Date()));
-  const [estimatedMinutes, setEstimatedMinutes] = useState<number | ''>('');
-  const [tags, setTags] = useState<string[]>([]);
+  if (!isOpen) return null;
+
+  return (
+    <TaskModalForm
+      key={initialTask?.id ?? `new-${defaultImportance}`}
+      onClose={onClose}
+      onSave={onSave}
+      initialTask={initialTask}
+      defaultImportance={defaultImportance}
+      allExistingTags={allExistingTags}
+    />
+  );
+};
+
+const TaskModalForm: React.FC<Omit<TaskModalProps, 'isOpen'>> = ({
+  onClose,
+  onSave,
+  initialTask,
+  defaultImportance = 7,
+  allExistingTags = [],
+}) => {
+  const [baseNow] = useState(() => new Date());
+  const todayStr = formatLocalDate(baseNow);
+
+  const [title, setTitle] = useState(() => initialTask?.title ?? '');
+  const [description, setDescription] = useState(() => initialTask?.description ?? '');
+  const [importance, setImportance] = useState<number>(
+    () => initialTask?.importance ?? (initialTask ? (initialTask.isImportant ? 8 : 2) : defaultImportance)
+  );
+  const [dueDate, setDueDate] = useState(() => initialTask?.dueDate || todayStr);
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | ''>(
+    () => initialTask?.estimatedMinutes || ''
+  );
+  const [tags, setTags] = useState<string[]>(() => initialTask?.tags || []);
   const [tagInput, setTagInput] = useState('');
 
-  // 初始化填充数据
-  useEffect(() => {
-    const todayStr = formatLocalDate(new Date());
-    if (initialTask) {
-      setTitle(initialTask.title);
-      setDescription(initialTask.description || '');
-      setImportance(initialTask.importance ?? (initialTask.isImportant ? 8 : 2));
-      setDueDate(initialTask.dueDate || todayStr);
-      setEstimatedMinutes(initialTask.estimatedMinutes || '');
-      setTags(initialTask.tags || []);
-    } else {
-      setTitle('');
-      setDescription('');
-      setImportance(defaultImportance);
-      setDueDate(todayStr);
-      setEstimatedMinutes('');
-      setTags([]);
-    }
-  }, [initialTask, defaultImportance, isOpen]);
-
   // 实时根据截止日期与预计耗时自动计算紧迫度
-  const effectiveDueDate = dueDate || formatLocalDate(new Date());
+  const effectiveDueDate = dueDate || todayStr;
   const algoResult = calculateDynamicUrgency({
     dueDate: effectiveDueDate,
     estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : 30,
+    currentTime: baseNow,
   });
   const urgency = algoResult.urgency;
-
-  if (!isOpen) return null;
 
   // 动态自动计算派生象限
   const computedQuadrantId = calculateQuadrant(importance, urgency);
   const computedQuadrantMeta = QUADRANTS_CONFIG[computedQuadrantId];
 
-  const handleQuickDateOffset = (daysOffset: number) => {
-    const target = new Date();
+  const getOffsetDateStr = (daysOffset: number) => {
+    const target = new Date(baseNow);
     target.setDate(target.getDate() + daysOffset);
-    setDueDate(formatLocalDate(target));
+    return formatLocalDate(target);
   };
 
   const handleAddTag = () => {
@@ -110,8 +122,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       title: title.trim(),
       description: description.trim() || undefined,
       importance,
-      urgency,
-      useAutoUrgency: true,
       dueDate: effectiveDueDate,
       tags,
       estimatedMinutes: typeof estimatedMinutes === 'number' ? estimatedMinutes : undefined,
@@ -189,22 +199,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             {/* 快捷日期选择 */}
             <div className="col-span-2 flex items-center gap-1.5 flex-wrap">
               <span className="text-[11px] text-slate-400 mr-0.5">快捷设定：</span>
-              {[
-                { label: '今天', days: 0 },
-                { label: '明天', days: 1 },
-                { label: '3天后', days: 3 },
-                { label: '1周后', days: 7 },
-                { label: '2周后', days: 14 },
-              ].map((preset) => {
-                const target = new Date();
-                target.setDate(target.getDate() + preset.days);
-                const presetStr = formatLocalDate(target);
+              {QUICK_DATE_PRESETS.map((preset) => {
+                const presetStr = getOffsetDateStr(preset.days);
                 const isSelected = dueDate === presetStr;
                 return (
                   <button
                     key={preset.label}
                     type="button"
-                    onClick={() => handleQuickDateOffset(preset.days)}
+                    onClick={() => setDueDate(presetStr)}
                     className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
                       isSelected
                         ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'

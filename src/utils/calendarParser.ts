@@ -92,6 +92,31 @@ export function icalTimeToWallClockDate(icalTime: any): Date {
 }
 
 /**
+ * 构建单次日历事件对象（用于普通非重复事件及重复事件展开失败降级）
+ */
+function buildSingleCalendarEvent(
+  event: ICAL.Event,
+  durationMs: number,
+  isAllDay: boolean,
+  fallbackPrefix: string = 'event'
+): CalendarEvent {
+  const startDate = icalTimeToWallClockDate(event.startDate);
+  const endDate = event.endDate
+    ? icalTimeToWallClockDate(event.endDate)
+    : new Date(startDate.getTime() + durationMs);
+
+  return {
+    id: event.uid || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title: event.summary || '未命名既定日程',
+    start: startDate,
+    end: endDate,
+    description: event.description || undefined,
+    location: event.location || undefined,
+    isAllDay,
+  };
+}
+
+/**
  * 将 ICS 文本解析为结构化的 CalendarEvent 数组，支持完整的 RRULE 循环日程展开与墙上时钟锁定
  */
 export function parseIcsText(
@@ -120,15 +145,13 @@ export function parseIcsText(
     for (const subcomp of vevents) {
       const event = new ICAL.Event(subcomp);
 
-      let isAllDay = false;
-      let durationMs = 3600 * 1000;
-
       if (!event.startDate) continue;
-      isAllDay = event.startDate.isDate;
+      const isAllDay = event.startDate.isDate;
+      let durationMs = 3600 * 1000;
 
       if (event.duration) {
         durationMs = event.duration.toSeconds() * 1000;
-      } else if (event.endDate && event.startDate) {
+      } else if (event.endDate) {
         const s = icalTimeToWallClockDate(event.startDate);
         const e = icalTimeToWallClockDate(event.endDate);
         durationMs = Math.max(15 * 60 * 1000, e.getTime() - s.getTime());
@@ -136,20 +159,7 @@ export function parseIcsText(
 
       // 1. 普通非重复事件
       if (!event.isRecurring()) {
-        const startDate = icalTimeToWallClockDate(event.startDate);
-        const endDate = event.endDate
-          ? icalTimeToWallClockDate(event.endDate)
-          : new Date(startDate.getTime() + durationMs);
-
-        parsedList.push({
-          id: event.uid || `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          title: event.summary || '未命名既定日程',
-          start: startDate,
-          end: endDate,
-          description: event.description || undefined,
-          location: event.location || undefined,
-          isAllDay,
-        });
+        parsedList.push(buildSingleCalendarEvent(event, durationMs, isAllDay));
       } else {
         // 2. 周期性重复事件 (如大学课程表 RRULE:FREQ=WEEKLY)
         try {
@@ -183,19 +193,7 @@ export function parseIcsText(
           }
         } catch (iterErr) {
           console.warn(`展开循环事件 "${event.summary}" 失败，降级使用单次起始时间`, iterErr);
-          const startDate = icalTimeToWallClockDate(event.startDate);
-          const endDate = event.endDate
-            ? icalTimeToWallClockDate(event.endDate)
-            : new Date(startDate.getTime() + durationMs);
-          parsedList.push({
-            id: event.uid || `event-${Date.now()}`,
-            title: event.summary || '未命名日程',
-            start: startDate,
-            end: endDate,
-            description: event.description || undefined,
-            location: event.location || undefined,
-            isAllDay,
-          });
+          parsedList.push(buildSingleCalendarEvent(event, durationMs, isAllDay));
         }
       }
     }
@@ -205,19 +203,4 @@ export function parseIcsText(
     console.error('ICS parse error:', err);
     throw new Error(`解析日历数据失败: ${err.message || '文件格式不合法'}`);
   }
-}
-
-/**
- * 筛选属于指定日期的非全天与全天事件
- */
-export function getEventsForDay(events: CalendarEvent[], targetDate: Date): CalendarEvent[] {
-  const startOfDay = new Date(targetDate);
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const endOfDay = new Date(targetDate);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  return events.filter((ev) => {
-    return ev.start < endOfDay && ev.end > startOfDay;
-  });
 }

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { formatLocalDate } from '../../types/task';
 import type { TaskItem } from '../../types/task';
 import { 
@@ -14,7 +14,7 @@ interface MatrixBoardProps {
   onToggleComplete: (id: string) => void;
   onEdit: (task: TaskItem) => void;
   onDelete: (id: string) => void;
-  onOpenCreateWithCoordinates: (importance: number, urgency: number) => void;
+  onOpenCreateWithCoordinates: (importance: number) => void;
 }
 
 export const MatrixBoard: React.FC<MatrixBoardProps> = ({
@@ -25,9 +25,9 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
   onOpenCreateWithCoordinates,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const todayStr = formatLocalDate(new Date());
+  const [todayStr] = useState(() => formatLocalDate(new Date()));
 
-  // 处理在坐标系任意空白区域点击，快速落位创建
+  // 处理在坐标系任意空白区域点击，根据 Y 轴落位重要度快速创建
   const handlePlaneClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // 只有点击背景本身才触发，点击已有任务卡片不触发
     if ((e.target as HTMLElement).closest('.task-coordinate-node')) {
@@ -36,22 +36,14 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
-
-    const xRatio = Math.max(0, Math.min(1, clickX / rect.width));
     const yRatio = Math.max(0, Math.min(1, clickY / rect.height));
 
-    // 坐标系映射规则：
-    // X 轴：左侧紧迫度 10，右侧紧迫度 0
-    const rawUrgency = 10 - xRatio * 10;
     // Y 轴：上方重要度 10，下方重要度 0
     const rawImportance = 10 - yRatio * 10;
-
-    const urgency = Math.round(rawUrgency * 2) / 2;
     const importance = Math.round(rawImportance * 2) / 2;
 
-    onOpenCreateWithCoordinates(importance, urgency);
+    onOpenCreateWithCoordinates(importance);
   };
 
   // 根据任务评分计算其在坐标系平面中的百分比位置
@@ -196,9 +188,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
             <div className="relative flex items-center justify-center">
               <div
                 className={`h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 shadow-sm transition-all duration-150 group-hover:scale-125 ${
-                  task.isCompleted
-                    ? 'bg-slate-400'
-                    : importance >= 5
+                  importance >= 5
                     ? urgency >= 5
                       ? 'bg-rose-500' // Q1
                       : 'bg-blue-500' // Q2
@@ -211,35 +201,25 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
 
             {/* 任务微卡片胶囊 */}
             <div
-              className={`mt-1.5 flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs shadow-md transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg max-w-[200px] sm:max-w-[240px] ${
-                task.isCompleted
-                  ? 'bg-slate-50/90 border-slate-200 text-slate-400 opacity-60 dark:bg-slate-900/90 dark:border-slate-800'
-                  : 'bg-white/95 border-slate-200 text-slate-800 dark:bg-slate-900/95 dark:border-slate-700 dark:text-slate-100'
-              }`}
+              className="mt-1.5 flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs shadow-md transition-all duration-200 group-hover:scale-105 group-hover:shadow-lg max-w-[200px] sm:max-w-[240px] bg-white/95 border-slate-200 text-slate-800 dark:bg-slate-900/95 dark:border-slate-700 dark:text-slate-100"
             >
-              {/* 完成状态勾选按钮 */}
+              {/* 完成勾选按钮（完成后永久移除） */}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleComplete(task.id);
                 }}
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-                  task.isCompleted
-                    ? 'bg-emerald-500 border-emerald-500 text-white'
-                    : 'border-slate-300 hover:border-indigo-500 dark:border-slate-600'
-                }`}
-                title={task.isCompleted ? '标为未完成' : '标为完成'}
+                className="group/check flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 dark:border-slate-600 dark:hover:border-emerald-400 dark:hover:bg-emerald-950/40 transition-colors"
+                title="完成并永久移除"
               >
-                {task.isCompleted && <Check className="h-3 w-3 stroke-[2.5]" />}
+                <Check className="h-3 w-3 stroke-[2.5] text-emerald-600 dark:text-emerald-400 opacity-0 group-hover/check:opacity-100 transition-opacity" />
               </button>
 
               {/* 任务标题与分值 */}
               <div className="min-w-0 flex-1">
                 <div
-                  className={`truncate font-medium text-xs leading-tight ${
-                    task.isCompleted ? 'line-through text-slate-400' : ''
-                  }`}
+                  className="truncate font-medium text-xs leading-tight"
                   title={task.title}
                 >
                   {task.title}
@@ -259,7 +239,7 @@ export const MatrixBoard: React.FC<MatrixBoardProps> = ({
                       <span>{task.algorithmStatusText || task.dueDate.slice(5)}</span>
                     </span>
                   )}
-                  {!task.isCompleted && task.completedDates?.includes(todayStr) && (
+                  {task.completedDates?.includes(todayStr) && (
                     <span className="px-1 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold shrink-0">
                       今日完成
                     </span>

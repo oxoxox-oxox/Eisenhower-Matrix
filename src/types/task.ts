@@ -5,47 +5,34 @@ export interface TaskItem {
   title: string;
   description?: string;
   // 核心二维量化分值：0 ~ 10
-  importance: number;         // 重要度评分 (0 ~ 10)
-  urgency: number;            // 紧迫度评分 (0 ~ 10)
-  useAutoUrgency?: boolean;   // 是否启用基于截止期迫近算法自动计算紧迫度 (默认 true)
-  isImportant: boolean;       // importance >= 5
-  isUrgent: boolean;          // urgency >= 5
-  quadrant: QuadrantId;       // 自动计算派生
-  isCompleted: boolean;       // 是否彻底完成
-  completedDates?: string[];  // 已完成当天目标的日期列表 (YYYY-MM-DD)
-  dueDate?: string | null;    // 截止日期 (YYYY-MM-DD)
-  tags: string[];             // 自定义标签
-  estimatedMinutes?: number;  // 预计耗时 (分钟)
-  createdAt: string;          // ISO 字符串
-  completedAt?: string | null;// 完成时间
+  importance: number;          // 重要度评分 (0 ~ 10)
+  urgency: number;             // 紧迫度评分 (0 ~ 10)
+  quadrant: QuadrantId;        // 自动计算派生
+  isCompleted?: boolean;       // 兼容旧版存储数据的迁移标记（完成后即永久移除）
+  isImportant?: boolean;       // 兼容旧版存储数据的回退标记
+  isUrgent?: boolean;          // 兼容旧版存储数据的回退标记
+  completedDates?: string[];   // 已完成当天目标的日期列表 (YYYY-MM-DD)
+  dueDate?: string | null;     // 截止日期 (YYYY-MM-DD)
+  tags: string[];              // 自定义标签
+  estimatedMinutes?: number;   // 预计耗时 (分钟)
+  createdAt: string;           // ISO 字符串
   algorithmStatusText?: string;// 算法给出的时间迫近描述
 }
 
 export interface QuadrantMeta {
   id: QuadrantId;
   name: string;
-  englishName: string;
-  action: string;
   shortAction: string;
-  description: string;
   themeColor: {
-    badgeBg: string;
-    badgeText: string;
     border: string;
-    cardBorderHover: string;
-    bgTint: string;
     accentDot: string;
     headerBg: string;
-    headerText: string;
   };
 }
-
-export type FilterStatus = 'all' | 'pending' | 'completed';
 
 export interface TaskFilterOptions {
   searchQuery: string;
   tag: string | null;
-  status: FilterStatus;
 }
 
 /**

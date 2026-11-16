@@ -7,7 +7,6 @@ import {
   ChevronLeft, 
   ChevronRight, 
   Calendar, 
-  Clock, 
   RefreshCw, 
   Link2, 
   Check, 
@@ -118,6 +117,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
   const schedulePlan = useMemo(() => {
     return generateDaySchedule(tasks, fixedEvents, {
       targetDate: selectedDate,
+      currentTime: nowTime,
       workStartHour: effectiveStartHour,
       workEndHour: effectiveEndHour,
       allowSplit,
@@ -499,11 +499,9 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                           onClick={() => onToggleCompleteTask(block.taskId, schedulePlan.dateStr)}
                           title={
                             block.isCompleted
-                              ? block.isFinalCompleted
-                                ? '任务已彻底完成（点击取消）'
-                                : '当天目标已完成（点击取消）'
+                              ? '当天目标已完成（点击取消）'
                               : block.isLastDay
-                              ? '今天是任务最后一天：勾选将直接标记任务彻底完成'
+                              ? '今天是任务最后一天：勾选将完成并永久移除该任务'
                               : '勾选仅标记当天目标完成'
                           }
                           className={`h-4 w-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
@@ -529,7 +527,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                       <div className="flex items-center gap-1 shrink-0 text-[10px] font-mono">
                         {isSingleLine && block.isCompleted && (
                           <span className="px-1 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-sans font-semibold">
-                            {block.isFinalCompleted ? '已彻底完成' : '今日完成'}
+                            今日完成
                           </span>
                         )}
                         <span>{formatClockTime(block.start)} - {formatClockTime(block.end)}</span>
@@ -545,7 +543,7 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
                         </span>
                         {block.isCompleted ? (
                           <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 font-semibold">
-                            {block.isFinalCompleted ? '✓ 任务已彻底完成' : '✓ 当天目标已完成'}
+                            ✓ 当天目标已完成
                           </span>
                         ) : (
                           block.isLastDay && (
@@ -589,34 +587,6 @@ export const DayScheduleView: React.FC<DayScheduleViewProps> = ({
             </div>
           </div>
         </div>
-
-        {/* 右侧抽屉：未排入事项提醒 (若存在) */}
-        {schedulePlan.unscheduledTasks.length > 0 && (
-          <div className="w-64 border-l border-slate-200 dark:border-slate-800 p-4 overflow-y-auto hidden lg:block bg-slate-50/30 dark:bg-slate-900/30">
-            <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5 text-amber-500" />
-              <span>未排入今日日程 ({schedulePlan.unscheduledTasks.length})</span>
-            </h3>
-            <p className="text-[10px] text-slate-400 mb-3">
-              基于精力负荷保护（5.5h 上限）、防切碎规则与 Q4 自动过滤策略暂缓排入：
-            </p>
-            <div className="space-y-2">
-              {schedulePlan.unscheduledTasks.map((item) => (
-                <div
-                  key={item.taskId}
-                  className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs shadow-2xs"
-                >
-                  <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                    {item.title}
-                  </div>
-                  <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-                    {item.reason}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 订阅链接配置弹窗 */}

@@ -11,6 +11,7 @@ import type {
 
 export interface ScheduleOptions {
   targetDate: Date;
+  currentTime?: Date;              // 基准当前时间（默认 new Date()）
   workStartHour?: number;          // 默认 08:00
   workEndHour?: number;            // 默认 22:00
   bufferMinutes?: number;          // 固定课程/会议后过渡缓冲，默认 10 分钟
@@ -32,7 +33,7 @@ export interface ScheduleOptions {
  * - 若总时长 > 60m：每满 60m 切分一节；若最后一节尾块 < 20m（如 70m -> 60m + 10m），
  *   则将最后两节均衡化（如 70m -> 40m + 30m），避免产生过于细碎的尾巴
  */
-export function splitIntoFocusSessions(
+function splitIntoFocusSessions(
   totalMinutes: number,
   maxSessionMinutes: number = 60,
   minTailMinutes: number = 20
@@ -259,6 +260,44 @@ export function computeTimelineLayout<T extends { id: string; start: Date; end: 
 }
 
 /**
+ * 计算午/晚餐保护休息块，若固定日程与默认时段重叠则自动向后顺延避让
+ */
+function computeMealBreakBlock(
+  targetDate: Date,
+  type: 'lunch' | 'dinner',
+  title: string,
+  startHour: number,
+  endHour: number,
+  dayEnd: Date,
+  dayFixedEvents: CalendarEvent[]
+): RestBlock | null {
+  const baseStart = new Date(targetDate);
+  baseStart.setHours(Math.floor(startHour), Math.round((startHour % 1) * 60), 0, 0);
+  const baseEnd = new Date(targetDate);
+  baseEnd.setHours(Math.floor(endHour), Math.round((endHour % 1) * 60), 0, 0);
+
+  let actualStart = new Date(baseStart);
+  for (const ev of dayFixedEvents) {
+    if (ev.start < baseEnd && ev.end > actualStart && ev.end.getTime() > actualStart.getTime()) {
+      actualStart = new Date(ev.end.getTime());
+    }
+  }
+  const actualEnd = new Date(
+    Math.min(dayEnd.getTime(), actualStart.getTime() + (endHour - startHour) * 3600 * 1000)
+  );
+  if (actualEnd <= actualStart) return null;
+
+  return {
+    id: `rest-${type}-${targetDate.getTime()}`,
+    type,
+    title,
+    start: actualStart,
+    end: actualEnd,
+    durationMinutes: Math.round((actualEnd.getTime() - actualStart.getTime()) / 60000),
+  };
+}
+
+/**
  * 单日排程核心执行器（支持传入当日释放时间基线 releaseTimeMs 与跨日顺延加权）
  */
 function runSingleDaySchedule(
@@ -271,6 +310,7 @@ function runSingleDaySchedule(
 ): DayScheduleResult {
   const {
     targetDate,
+    currentTime,
     workStartHour = 8.0,
     workEndHour = 22.0,
     bufferMinutes = 10,
@@ -332,61 +372,15 @@ function runSingleDaySchedule(
   }
 
   // 3. 构造午餐保护区 (12:00 ~ 13:00) 与晚餐保护区 (18:00 ~ 19:00)，自适应避让拖堂或课程
-  const baseLunchStart = new Date(targetDate);
-  baseLunchStart.setHours(Math.floor(lunchStartHour), Math.round((lunchStartHour % 1) * 60), 0, 0);
-  const baseLunchEnd = new Date(targetDate);
-  baseLunchEnd.setHours(Math.floor(lunchEndHour), Math.round((lunchEndHour % 1) * 60), 0, 0);
-
-  let actualLunchStart = new Date(baseLunchStart);
-  for (const ev of dayFixedEvents) {
-    if (ev.start < baseLunchEnd && ev.end > actualLunchStart) {
-      if (ev.end.getTime() > actualLunchStart.getTime()) {
-        actualLunchStart = new Date(ev.end.getTime());
-      }
-    }
-  }
-  const actualLunchEnd = new Date(
-    Math.min(dayEnd.getTime(), actualLunchStart.getTime() + (lunchEndHour - lunchStartHour) * 3600 * 1000)
+  const lunchBlock = computeMealBreakBlock(
+    targetDate, 'lunch', '午间休息 (Lunch Break)', lunchStartHour, lunchEndHour, dayEnd, dayFixedEvents
   );
+  if (lunchBlock) visualRestBlocks.push(lunchBlock);
 
-  const baseDinnerStart = new Date(targetDate);
-  baseDinnerStart.setHours(Math.floor(dinnerStartHour), Math.round((dinnerStartHour % 1) * 60), 0, 0);
-  const baseDinnerEnd = new Date(targetDate);
-  baseDinnerEnd.setHours(Math.floor(dinnerEndHour), Math.round((dinnerEndHour % 1) * 60), 0, 0);
-
-  let actualDinnerStart = new Date(baseDinnerStart);
-  for (const ev of dayFixedEvents) {
-    if (ev.start < baseDinnerEnd && ev.end > actualDinnerStart) {
-      if (ev.end.getTime() > actualDinnerStart.getTime()) {
-        actualDinnerStart = new Date(ev.end.getTime());
-      }
-    }
-  }
-  const actualDinnerEnd = new Date(
-    Math.min(dayEnd.getTime(), actualDinnerStart.getTime() + (dinnerEndHour - dinnerStartHour) * 3600 * 1000)
+  const dinnerBlock = computeMealBreakBlock(
+    targetDate, 'dinner', '晚间休息 (Dinner Break)', dinnerStartHour, dinnerEndHour, dayEnd, dayFixedEvents
   );
-
-  if (actualLunchEnd > actualLunchStart) {
-    visualRestBlocks.push({
-      id: `rest-lunch-${targetDate.getTime()}`,
-      type: 'lunch',
-      title: '午间休息 (Lunch Break)',
-      start: actualLunchStart,
-      end: actualLunchEnd,
-      durationMinutes: Math.round((actualLunchEnd.getTime() - actualLunchStart.getTime()) / 60000),
-    });
-  }
-
-  if (actualDinnerEnd > actualDinnerStart) {
-    visualRestBlocks.push({
-      id: `rest-dinner-${targetDate.getTime()}`,
-      type: 'dinner',
-      title: '晚间休息 (Dinner Break)',
-      start: actualDinnerStart,
-      end: actualDinnerEnd,
-      durationMinutes: Math.round((actualDinnerEnd.getTime() - actualDinnerStart.getTime()) / 60000),
-    });
-  }
+  if (dinnerBlock) visualRestBlocks.push(dinnerBlock);
 
   // 4. 合并所有不可动区间（固定课程 + 课后内联缓冲 + 午晚餐）并求逆得到纯净空闲区间
   const allBusyEntities: { start: Date; end: Date }[] = [
@@ -502,7 +496,7 @@ function runSingleDaySchedule(
 
   // 6. 待办事项分类与多维优先级排序
   const targetDateStr = formatLocalDate(targetDate);
-  const todayStr = formatLocalDate(new Date());
+  const todayStr = formatLocalDate(currentTime ?? new Date());
 
   // 过去日期：只展示在当天实际打卡完成的任务，不把未完成任务排进过去的日子
   const pendingTasks = tasks.filter((t) => {
@@ -816,7 +810,6 @@ function runSingleDaySchedule(
           importance: task.importance,
           urgency: task.urgency,
           isCompleted: isDoneOnTargetDay,
-          isFinalCompleted: Boolean(task.isCompleted),
           isLastDay: isLastDayOfTask,
           energyZone: p.zone,
           strategyLabel: getStrategyLabel(p.zone, task.quadrant, isMultiSession),
@@ -871,7 +864,6 @@ function runSingleDaySchedule(
     fixedEvents: dayFixedEvents,
     scheduledTasks: scheduledTasks.sort((a, b) => a.start.getTime() - b.start.getTime()),
     restBlocks: mergedVisualRestBlocks,
-    freeSlots: workingFreeSlots.filter((s) => s.durationMinutes >= 15),
     unscheduledTasks,
     stats: {
       totalBusyMinutes,
@@ -893,7 +885,7 @@ export function generateDaySchedule(
   fixedEvents: CalendarEvent[],
   options: ScheduleOptions
 ): DayScheduleResult {
-  const now = new Date();
+  const now = options.currentTime ?? new Date();
   const todayStr = formatLocalDate(now);
   const targetDateStr = formatLocalDate(options.targetDate);
 
@@ -967,7 +959,7 @@ export function generateDaySchedule(
 /**
  * 合并时间上相邻（首尾相接）或重叠的 Break Time，避免连续出现碎片化休息卡片
  */
-export function mergeAdjacentRestBlocks(blocks: RestBlock[]): RestBlock[] {
+function mergeAdjacentRestBlocks(blocks: RestBlock[]): RestBlock[] {
   if (blocks.length <= 1) return blocks;
 
   const sorted = [...blocks].sort((a, b) => a.start.getTime() - b.start.getTime());

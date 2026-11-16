@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>艾森豪威尔矩阵 (Eisenhower Matrix) · 四象限时间管理</title>
     <meta name="description" content="基于艾森豪威尔法则的四象限时间管理看板，根据重要程度和紧迫程度自动分流，告别虚假忙碌。" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('em_theme');
+          var isDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.classList.toggle('dark', isDark);
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
     <div id="root"></div>
